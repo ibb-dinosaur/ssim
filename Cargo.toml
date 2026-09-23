@@ -1,0 +1,11 @@
+[package]
+name = "ssim"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+meval = "0.2.0"
+rand = "0.10.3"
+serde = { version = "1.0.229", features = ["derive"] }
+threadpool = "1.8.1"
+yaml_serde = "0.10"
