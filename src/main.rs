@@ -20,8 +20,8 @@ enum Either<L, R> {
 
 #[derive(Deserialize, Debug)]
 struct RxDefinition {
-    ins: Vec<Either<String, (f64, String)>>,
-    outs: Vec<Either<String, (f64, String)>>,
+    ins: Vec<Either<String, (u64, String)>>,
+    outs: Vec<Either<String, (u64, String)>>,
     rate: Either<f64, String>,
     #[serde(alias = "rev-rate")]
     rev_rate: Option<Either<f64, String>>,
@@ -30,9 +30,9 @@ struct RxDefinition {
 #[derive(Debug, Default, Clone)]
 struct Reaction {
     // (stoichiometry, species_index)
-    reactants: Vec<(f64, usize)>,
+    reactants: Vec<(u64, usize)>,
     // (stoichiometry, species_index)
-    products: Vec<(f64, usize)>,
+    products: Vec<(u64, usize)>,
     // rate constant k such that v = k*[Sp1]^stoich1 * [Sp2]^stoich2 ...
     rate: f64,
     // if this reaction has a reverse, this is its index, otherwise usize::MAX
@@ -76,13 +76,13 @@ fn parse_definitions(proc: &ProcDefinition) -> (ChemicalProcess, ChemicalState) 
         let mut rx = Reaction::default();
         for x in &def.ins {
             rx.reactants.push(match x {
-                Either::Left(x) => (1.0, species(x)),
+                Either::Left(x) => (1, species(x)),
                 Either::Right(x) => (x.0, species(&x.1)),
             });
         }
         for x in &def.outs {
             rx.products.push(match x {
-                Either::Left(x) => (1.0, species(x)),
+                Either::Left(x) => (1, species(x)),
                 Either::Right(x) => (x.0, species(&x.1)),
             });
         }
@@ -187,7 +187,14 @@ impl StochasticProcess for ChemicalProcess {
         for (i, rx) in self.reactions.iter().enumerate() {
             let mut a = rx.rate;
             for (stoich, sp) in &rx.reactants {
-                a *= (state.counts[*sp] as f64).powf(*stoich);
+                // combinatorial propensity (n over k), n = number of particles, k = stoichiometric coefficient
+                if state.counts[*sp] < *stoich {
+                    a = 0.0;
+                    break;
+                }
+                for k in 0..*stoich {
+                    a *= (state.counts[*sp] - k) as f64 / (k + 1) as f64;
+                }
             }
             propensities[i] = a;
         }
@@ -197,10 +204,10 @@ impl StochasticProcess for ChemicalProcess {
         state.time += dt;
         let rx = &self.reactions[chosen_step];
         for (stoich, sp) in &rx.reactants {
-            state.counts[*sp] -= *stoich as u64;
+            state.counts[*sp] = state.counts[*sp].saturating_sub(*stoich as u64);
         }
         for (stoich, sp) in &rx.products {
-            state.counts[*sp] += *stoich as u64;
+            state.counts[*sp] = state.counts[*sp].saturating_add(*stoich as u64);
         }
     }
     
@@ -279,7 +286,7 @@ fn gillespie_stochastic_step(propensities: &[f64]) -> (usize, f64) {
     let threshold: f64 = rand::random_range(0.0..1.0f64) * a0;
     let mut cum = 0.0;
     let mut i = 0;
-    while i < propensities.len() {
+    while i < propensities.len() - 1 {
         cum += propensities[i];
         if cum > threshold {
             break
